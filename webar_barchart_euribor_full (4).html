@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Interaktive AR‑Szenen: Portfolio & EURIBOR</title>
+  <style>
+    :root{
+      --bg:#0a0f24; --panel:rgba(12,18,40,0.72); --text:#e9eefb; --accent:#6ee7ff; --accent2:#9bffb3;
+    }
+    html,body{margin:0;height:100%;overflow:hidden;background:radial-gradient(1200px 1200px at 20% -10%, #13204a 0%, #0a0f24 55%, #070c18 100%);} 
+    canvas{position:fixed; inset:0; display:block; z-index:0}
+    .ui { position:fixed; left:0; right:0; bottom: env(safe-area-inset-bottom, 18px); display:flex; flex-direction:column; align-items:center; gap:10px; z-index:1002; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial; }
+    .row { display:flex; gap:10px; backdrop-filter: blur(10px); background: var(--panel); padding:10px; border-radius:14px; box-shadow: 0 10px 30px rgba(0,0,0,0.25); }
+    .btn { border:0; border-radius:12px; padding:10px 14px; font-weight:700; color:#0b1736; background:#ffffff; cursor:pointer; box-shadow:0 6px 18px rgba(0,0,0,0.25); }
+    .btn:active{ transform: translateY(1px); }
+    .legend { position:fixed; top:10px; left:50%; transform:translateX(-50%); color:var(--text); font: 13px/1.3 system-ui, Arial; z-index:1003; background: var(--panel); padding:8px 10px; border-radius:12px; }
+    .note { position:fixed; top:54px; left:50%; transform:translateX(-50%); color:#ffe69b; font: 12px/1.3 system-ui, Arial; z-index:1003; background: rgba(0,0,0,0.5); padding:6px 8px; border-radius:10px; }
+  </style>
+</head>
+<body>
+  <div class="legend">Tippe auf ein Szenario. In AR erscheint das Diagramm ~1 m vor dir. Moderne Optik aktiv.</div>
+  <div class="note" id="note" hidden>AR nicht verfügbar – 3D‑Ansicht als Fallback.</div>
+  <div class="ui">
+    <div class="row" aria-label="Portfolio‑Szenarien">
+      <button class="btn" id="btnBase">Base</button>
+      <button class="btn" id="btnUp">Up</button>
+      <button class="btn" id="btnDown">Down</button>
+    </div>
+    <div class="row" aria-label="EURIBOR‑Szenarien">
+      <button class="btn" id="btnE1">+1 % EURIBOR</button>
+      <button class="btn" id="btnE3">+3 % EURIBOR</button>
+      <button class="btn" id="btnEm1">−1 % EURIBOR</button>
+      <button class="btn" id="btnEm3">−3 % EURIBOR</button>
+    </div>
+  </div>
+
+  <script type="module">
+    import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.1/build/three.module.js';
+    import { ARButton } from 'https://cdn.jsdelivr.net/npm/three@0.160.1/examples/jsm/webxr/ARButton.js';
+
+    const BASE_VALUES = { a:8, b:6, c:4 };
+    const UNIT = 0.20; // 0.20 m per value unit
+
+    const renderer = new THREE.WebGLRenderer({ antialias:true, alpha:true, powerPreference:'high-performance' });
+    renderer.setPixelRatio(Math.min(2, window.devicePixelRatio));
+    renderer.setSize(innerWidth, innerHeight);
+    renderer.xr.enabled = true;
+    renderer.domElement.style.zIndex = '1';
+    document.body.appendChild(renderer.domElement);
+
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(60, innerWidth/innerHeight, 0.01, 50);
+    camera.position.set(0,1.2,3);
+
+    // Lighting
+    const hemi = new THREE.HemisphereLight(0xffffff, 0x112244, 0.9); scene.add(hemi);
+    const dir = new THREE.DirectionalLight(0xffffff, 0.9); dir.position.set(3,4,2); scene.add(dir);
+
+    // Environment approximation (soft gradient background already via CSS)
+
+    // Group
+    const group = new THREE.Group(); scene.add(group);
+
+    // Base plate
+    const spacing = 0.46; const barW = 0.30, barD = 0.30;
+    const plate = new THREE.Mesh(
+      new THREE.BoxGeometry(spacing*3, 0.02, 0.84),
+      new THREE.MeshPhysicalMaterial({ color:0x0e1b42, metalness:0.1, roughness:0.9, clearcoat:1.0 })
+    );
+    plate.position.y = 0.01; group.add(plate);
+
+    // Modern material (glass‑like)
+    function glass(color){
+      return new THREE.MeshPhysicalMaterial({ color, metalness:0.2, roughness:0.1, transmission:0.65, thickness:0.15, ior:1.3, clearcoat:1.0, clearcoatRoughness:0.05 });
+    }
+
+    function makeBar(color){
+      const g = new THREE.BoxGeometry(barW, 1.0, barD); // height=1 -> scale y
+      const m = glass(color);
+      const mesh = new THREE.Mesh(g,m);
+      mesh.userData.height = 0.05; mesh.userData.target = 0.05;
+      return mesh;
+    }
+
+    const barA = makeBar(0xffd54f); // amber glass
+    const barB = makeBar(0x66ffa6); // green glass
+    const barC = makeBar(0x64b5ff); // blue glass
+    barA.position.x = -spacing; barB.position.x = 0; barC.position.x = spacing;
+    group.add(barA, barB, barC);
+
+    // Fallback ground
+    const ground = new THREE.Mesh(
+      new THREE.CircleGeometry(1.5, 64),
+      new THREE.MeshStandardMaterial({ color:0x122356, transparent:true, opacity:0.35 })
+    ); ground.rotation.x = -Math.PI/2; ground.position.y = 0; scene.add(ground);
+
+    function setBarValue(mesh, v){ mesh.userData.target = Math.max(0.05, v*UNIT); }
+    function applyHeight(mesh, h){ mesh.scale.y = h; mesh.position.y = (h/2)+0.02; }
+    function animateHeights(dt){
+      const speed = 6.0; [barA,barB,barC].forEach(m=>{ const cur=m.userData.height, tar=m.userData.target; const next=cur+(tar-cur)*Math.min(1,dt*speed); m.userData.height=next; applyHeight(m,next); });
+    }
+
+    // --- Scenarios (Portfolio)
+    function setBase(){ setBarValue(barA,8); setBarValue(barB,6); setBarValue(barC,4); }
+    function setUp(){ setBarValue(barA,16); setBarValue(barB,12); setBarValue(barC,8); }
+    function setDown(){ setBarValue(barA,3); setBarValue(barB,2); setBarValue(barC,1); }
+
+    // --- EURIBOR Scenarios (multipliers on BASE)
+    function setE1(){ setBarValue(barA, BASE_VALUES.a*1.10); setBarValue(barB, BASE_VALUES.b*1.10); setBarValue(barC, BASE_VALUES.c*1.10); }
+    function setE3(){ setBarValue(barA, BASE_VALUES.a*1.30); setBarValue(barB, BASE_VALUES.b*1.30); setBarValue(barC, BASE_VALUES.c*1.30); }
+    function setEm1(){ setBarValue(barA, BASE_VALUES.a*0.90); setBarValue(barB, BASE_VALUES.b*0.90); setBarValue(barC, BASE_VALUES.c*0.90); }
+    function setEm3(){ setBarValue(barA, BASE_VALUES.a*0.70); setBarValue(barB, BASE_VALUES.b*0.70); setBarValue(barC, BASE_VALUES.c*0.70); }
+
+    // Init
+    setBase(); [barA,barB,barC].forEach(b=>applyHeight(b,b.userData.height));
+
+    // UI
+    const id = s=>document.getElementById(s);
+    id('btnBase').addEventListener('click', setBase, {passive:true});
+    id('btnUp').addEventListener('click', setUp, {passive:true});
+    id('btnDown').addEventListener('click', setDown, {passive:true});
+    id('btnE1').addEventListener('click', setE1, {passive:true});
+    id('btnE3').addEventListener('click', setE3, {passive:true});
+    id('btnEm1').addEventListener('click', setEm1, {passive:true});
+    id('btnEm3').addEventListener('click', setEm3, {passive:true});
+
+    // AR Button
+    const arBtn = ARButton.createButton(renderer, {
+      requiredFeatures: ['local-floor'],
+      optionalFeatures: ['dom-overlay'],
+      domOverlay: { root: document.body }
+    });
+    arBtn.style.zIndex = '1004';
+    document.body.appendChild(arBtn);
+
+    let inAR=false;
+    renderer.xr.addEventListener('sessionstart', ()=>{ inAR=true; group.position.set(0,0,-1.0); camera.position.set(0,1.2,0); });
+    renderer.xr.addEventListener('sessionend', ()=>{ inAR=false; group.position.set(0,0,0); camera.position.set(0,1.2,3); });
+
+    if (!navigator.xr) document.getElementById('note').hidden=false;
+    else navigator.xr.isSessionSupported('immersive-ar').then(ok=>{ if(!ok) document.getElementById('note').hidden=false; }).catch(()=>{ document.getElementById('note').hidden=false; });
+
+    // Render
+    let last = performance.now();
+    renderer.setAnimationLoop(()=>{
+      const now = performance.now(); const dt = Math.min(0.05,(now-last)/1000); last=now;
+      animateHeights(dt);
+      if (!inAR) group.rotation.y += 0.25*dt;
+      renderer.render(scene,camera);
+    });
+
+    addEventListener('resize', ()=>{ renderer.setSize(innerWidth,innerHeight); camera.aspect=innerWidth/innerHeight; camera.updateProjectionMatrix(); });
+  </script>
+</body>
+</html>
